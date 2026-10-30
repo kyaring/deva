@@ -1,0 +1,80 @@
+appId: dev.sqfcy.deva
+productName: Deva
+copyright: Copyright © 2026 sqfcy
+
+directories:
+  buildResources: build
+  output: dist
+
+files:
+  - out/**
+  - package.json
+
+# 让最终安装包自带运行时，用户双击安装后即可启动，无需任何环境配置
+asar: true
+
+# mac 包做 ad-hoc 签名（免费、无证书），见脚本内说明；其他平台直接跳过
+afterPack: ./scripts/adhoc-sign.cjs
+
+# Windows 便携版 zip 套一层 Deva\ 目录（electron-builder 默认把文件直接放在压缩包根目录），见脚本内说明
+afterAllArtifactBuild: ./scripts/portable-zip.cjs
+
+# Electron 二进制走国内镜像，避免打包时卡在下载
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/
+
+win:
+  # nsis = 安装包；zip = 便携版（解压后直接运行 Deva.exe，数据同样在 ~/.deva，与安装版共用）
+  target:
+    - nsis
+    - zip
+  # 只有 zip 用到这个名字：nsis 段自己的 artifactName 优先
+  artifactName: ${productName}-${version}-portable.${ext}
+  icon: build/icon.ico
+  # 「检查更新」的下载源（electron-updater 读这里）：打包时据此生成 latest.yml 与安装目录里的 app-update.yml，
+  # 实际上传由 CI 的 release job 完成。只挂在 win 段——mac 不走自动更新
+  publish:
+    provider: github
+    owner: kyaring
+    repo: deva
+
+nsis:
+  # 默认名带空格（Deva Setup x.y.z.exe），传到 GitHub Release 会被改成点号，这里统一成连字符
+  artifactName: ${productName}-${version}-setup.${ext}
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  # 自定义安装目录后会检测写入权限，见 build/installer.nsh（electron-builder 自动引入）
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Deva
+
+mac:
+  target:
+    - dmg
+  # 1024×1024 png，electron-builder 自动转 icns
+  icon: build/icon.png
+  category: public.app-category.developer-tools
+
+dmg:
+  # 文件名带架构，arm64 / x64 两个包才不会重名
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+# deb 的默认文件名取 package 名（@deva/desktop），会生成带 @ 的子目录，fpm 不会建目录而失败，故显式指定
+deb:
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+
+linux:
+  target:
+    # AppImage：免安装的便携版。Ubuntu 23.10+ 默认限制非特权用户命名空间，Electron 沙箱可能无法启动，待解决（未附带 AppArmor profile）
+    # deb：Debian / Ubuntu 安装包，安装后注册桌面入口与图标
+    - AppImage
+    - deb
+  category: Development
+  # 1024×1024 png，electron-builder 自动生成各尺寸图标
+  icon: build/icon.png
+  # 可执行文件名：默认取 package.json 的 name（@deva/desktop），带 @ 和 / 无法用于文件路径，故显式指定
+  executableName: deva
+  # deb 必填的维护者信息（electron-builder 要求 author 带邮箱）。TODO：替换为真实的维护者姓名与邮箱
+  maintainer: "sqfcy <TODO@example.com>"

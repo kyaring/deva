@@ -1,0 +1,120 @@
+# 有新的 v* tag 时打包 Windows（exe 安装包 + zip 便携版）/ macOS 安装包 / Linux（deb + AppImage），传到对应的 GitHub Release，并按提交自动生成版本说明。
+# 发版前先改 apps/desktop/package.json 的 version 并提交，然后二选一：
+#  - 在 GitHub 网页上新建 Release（顺带建 tag）并直接发布：CI 几分钟后传上安装包、把自动生成的说明接在
+#    网页上写的说明后面（没写就只有自动生成的）。之后随时可以在网页上改说明。
+#    安装包传完之前，应用里「检查更新」不会提示这个版本。
+#  - 本地 git tag v<version> && git push origin v<version>：CI 建成草稿 Release，检查 / 改写说明后再点
+#    「Publish release」；发布前对外不可见。（网页上「Save draft」不会建 tag，触发不了 CI，所以要先审再发只能走这条。）
+# 本地预览版本说明：node .github/scripts/release-notes.mjs v<version> HEAD
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - name: win-x64
+            os: windows-latest
+            args: --win nsis zip --x64
+          # node-pty 按平台/架构拆包，pnpm 只装本机那份，所以两种芯片各用对应的机器原生打包
+          - name: mac-arm64
+            os: macos-latest
+            args: --mac --arm64
+          - name: mac-x64
+            os: macos-15-intel
+            args: --mac --x64
+          # 用 22.04 构建以保证较旧 glibc 下的兼容性（在 24.04 上打的包可能无法在更老的发行版运行）
+          - name: linux-x64
+            os: ubuntu-22.04
+            args: --linux deb AppImage --x64
+    env:
+      # 没有 Apple 开发者证书，跳过钥匙串查找签名身份；mac 包改由 afterPack 钩子做 ad-hoc 签名
+      CSC_IDENTITY_AUTO_DISCOVERY: false
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 校验 tag 与 package.json 版本一致
+        shell: bash
+        run: |
+          PKG_VERSION=$(node -p "require('./apps/desktop/package.json').version")
+          if [ "$GITHUB_REF_NAME" != "v$PKG_VERSION" ]; then
+            echo "::error::tag $GITHUB_REF_NAME 与 apps/desktop/package.json 的版本 v$PKG_VERSION 不一致"
+            exit 1
+          fi
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: 打包
+        working-directory: apps/desktop
+        # 显式 --publish never：CI 环境下 electron-builder 默认会尝试自己发布，发布统一交给下面的 release job
+        run: pnpm exec electron-builder ${{ matrix.args }} --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          # latest.yml + blockmap 是 Windows「检查更新」要读的：前者告诉客户端最新版本与安装包校验值，后者用于增量下载
+          path: |
+            apps/desktop/dist/*-setup.exe
+            apps/desktop/dist/*-setup.exe.blockmap
+            apps/desktop/dist/latest.yml
+            apps/desktop/dist/*-portable.zip
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.AppImage
+            apps/desktop/dist/*.deb
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # 版本说明要读上一个 tag 以来的提交，得拉完整历史与全部 tag
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 生成版本说明
+        run: node .github/scripts/release-notes.mjs "$GITHUB_REF_NAME" > release-notes.md
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: 创建 / 更新 Release
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          body_path: release-notes.md
+          # 网页上已发布的 Release：接在原说明后面，不覆盖网页上写的内容
+          append_body: true
+          # 本次新建的 Release 建成草稿，发版人看过说明再手动发布；网页上已发布的不受影响（保持已发布）
+          draft: true
+          # v0.2.0-beta.1 这类带连字符的 tag 标为预发布
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+      - name: 输出 Release 链接
+        run: |
+          echo "Release：${{ steps.release.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "如果是草稿（本地推 tag 触发的），检查版本说明后在 GitHub 上点「Publish release」发布。" >> "$GITHUB_STEP_SUMMARY"

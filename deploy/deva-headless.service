@@ -1,0 +1,24 @@
+[Unit]
+Description=Deva headless agent (Telegram / Feishu bridge, no GUI)
+Documentation=https://github.com/kyaring/deva
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 不要以 root 运行：run_command 不受任何限制，进程的用户权限就是 Agent 的权限
+User=deva
+Group=deva
+Environment=DEVA_HOME=/var/lib/deva
+# corepack（pnpm 等）的缓存放在 deva 自己的家目录下，Agent 的命令会继承这个环境
+Environment=COREPACK_HOME=/var/lib/deva/.cache/corepack
+# 主密钥（DEVA_MASTER_KEY）等环境配置，root 拥有、权限 0600，格式 KEY=VALUE
+EnvironmentFile=-/etc/deva/deva.env
+ExecStart=/opt/deva/bin/deva-headless serve
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+#!/bin/sh
+# deva-headless：以 deva 用户、与 systemd 服务相同的环境运行无头版 CLI，用于 remote / provider / setup / status 等管理命令。
+# 需要 root（读取 /etc/deva/deva.env）。服务本身由 systemd 管理，不要用它启动 serve。
+set -eu
+if [ "$(id -u)" -ne 0 ]; then
+  echo "请使用 sudo 运行：sudo deva-headless <命令>" >&2
+  exit 1
+fi
+set -a
+. /etc/deva/deva.env
+set +a
+exec runuser -u deva -- env DEVA_HOME=/var/lib/deva DEVA_MASTER_KEY="${DEVA_MASTER_KEY:-}" COREPACK_HOME=/var/lib/deva/.cache/corepack \
+  HTTPS_PROXY="${HTTPS_PROXY:-}" NO_PROXY="${NO_PROXY:-}" \
+  /opt/deva/bin/deva-headless "$@"
